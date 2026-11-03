@@ -1,0 +1,886 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ระบบบันทึกคะแนน ม.1</title>
+    
+    <!-- Tailwind CSS สำหรับการตกแต่ง -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- FontAwesome สำหรับไอคอน -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel สำหรับแปล JSX ในเบราว์เซอร์ -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Recharts สำหรับสร้างกราฟ -->
+    <script src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js"></script>
+    <script src="https://unpkg.com/recharts@2.1.12/umd/Recharts.js"></script>
+    
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&display=swap');
+        body { 
+            font-family: 'Sarabun', sans-serif; 
+            background-color: #f9fafb;
+        }
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <!-- 1. โหลดโมดูล Firebase -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, onSnapshot, doc, addDoc, updateDoc, deleteDoc, query, setDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // ส่งออกฟังก์ชัน Firebase ไปให้ React (Babel) ใช้งานได้
+        window.FirebaseAPI = {
+            initializeApp, getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged,
+            getFirestore, collection, onSnapshot, doc, addDoc, updateDoc, deleteDoc, query, setDoc
+        };
+        
+        // แจ้งสถานะว่า Firebase โหลดเสร็จแล้ว
+        window.isFirebaseLoaded = true;
+    </script>
+
+    <!-- 2. ส่วนของ React App -->
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+        
+        // ฟังก์ชันสำหรับเริ่มการทำงานของแอปหลังจากโหลดไลบรารีครบ
+        const initApp = () => {
+            const Recharts = window.Recharts || {};
+            const { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip: RechartsTooltip, ResponsiveContainer, Cell } = Recharts;
+            
+            const { 
+                initializeApp, getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged,
+                getFirestore, collection, onSnapshot, doc, addDoc, updateDoc, deleteDoc, query, setDoc
+            } = window.FirebaseAPI;
+
+            // ==========================================
+            // ใส่ข้อมูลตั้งค่า Firebase ของคุณที่นี่
+            // ==========================================
+            const FIREBASE_CONFIG = {
+                apiKey: "YOUR_API_KEY",
+                authDomain: "YOUR_AUTH_DOMAIN",
+                projectId: "YOUR_PROJECT_ID",
+                storageBucket: "YOUR_STORAGE_BUCKET",
+                messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
+                appId: "YOUR_APP_ID"
+            };
+
+            const firebaseConfig = typeof __firebase_config !== 'undefined' 
+                ? JSON.parse(__firebase_config) 
+                : FIREBASE_CONFIG;
+                
+            const appId = typeof __app_id !== 'undefined' ? __app_id : 'web-grade-system-m1';
+
+            let app, auth, db;
+            let firebaseError = false;
+            try {
+                if (firebaseConfig.apiKey !== "YOUR_API_KEY") {
+                    app = initializeApp(firebaseConfig);
+                    auth = getAuth(app);
+                    db = getFirestore(app);
+                } else {
+                    firebaseError = true;
+                }
+            } catch (e) {
+                console.error("Firebase init error:", e);
+                firebaseError = true;
+            }
+
+            // --- โครงสร้างรายวิชาพื้นฐาน ---
+            const curriculumGroups = [
+              { name: "ก่อนกลางภาค 1", max: 15, color: "bg-blue-50 text-blue-800", borderColor: "border-blue-200", cols: [
+                { id: 's1', label: 'ช.ม. 1', max: 4 }, { id: 's2', label: 'ช.ม. 2', max: 4 }, { id: 's3', label: 'ช.ม. 3', max: 4 }, { id: 's4', label: 'ช.ม. 4', max: 3 }
+              ]},
+              { name: "ก่อนกลางภาค 2", max: 15, color: "bg-green-50 text-green-800", borderColor: "border-green-200", cols: [
+                { id: 's5', label: 'ช.ม. 5', max: 3 }, { id: 's6', label: 'ช.ม. 6', max: 3 }, { id: 's7', label: 'ช.ม. 7', max: 3 }, { id: 's8', label: 'ช.ม. 8', max: 3 }, { id: 's9', label: 'ช.ม. 9', max: 3 }
+              ]},
+              { name: "สอบกลางภาค", max: 20, color: "bg-red-50 text-red-800", borderColor: "border-red-200", cols: [
+                { id: 's10', label: 'ช.ม. 10', max: 20 }
+              ]},
+              { name: "หลังกลางภาค 1", max: 15, color: "bg-purple-50 text-purple-800", borderColor: "border-purple-200", cols: [
+                { id: 's11', label: 'ช.ม. 11', max: 3 }, { id: 's12', label: 'ช.ม. 12', max: 4 }, { id: 's13', label: 'ช.ม. 13', max: 4 }, { id: 's14', label: 'ช.ม. 14', max: 4 }
+              ]},
+              { name: "หลังกลางภาค 2", max: 15, color: "bg-orange-50 text-orange-800", borderColor: "border-orange-200", cols: [
+                { id: 's15', label: 'ช.ม. 15', max: 3 }, { id: 's16', label: 'ช.ม. 16', max: 3 }, { id: 's17', label: 'ช.ม. 17', max: 3 }, { id: 's18', label: 'ช.ม. 18', max: 3 }, { id: 's19', label: 'ช.ม. 19', max: 3 }
+              ]},
+              { name: "สอบปลายภาค", max: 20, color: "bg-pink-50 text-pink-800", borderColor: "border-pink-200", cols: [
+                { id: 's20', label: 'ช.ม. 20', max: 20 }
+              ]},
+            ];
+
+            const calculateGrade = (total, overallMax = 100) => {
+              const percentage = overallMax > 0 ? (total / overallMax) * 100 : 0;
+              const score = Math.round(percentage);
+              if (score >= 80) return "4";
+              if (score >= 75) return "3.5";
+              if (score >= 70) return "3";
+              if (score >= 65) return "2.5";
+              if (score >= 60) return "2";
+              if (score >= 55) return "1.5";
+              if (score >= 50) return "1";
+              return "0";
+            };
+
+            const defaultMaxScores = {
+              s1: 4, s2: 4, s3: 4, s4: 3, s5: 3, s6: 3, s7: 3, s8: 3, s9: 3, s10: 20,
+              s11: 3, s12: 4, s13: 4, s14: 4, s15: 3, s16: 3, s17: 3, s18: 3, s19: 3, s20: 20
+            };
+
+            // --- Component: DashboardView ---
+            const DashboardView = ({ students, allSessions, calculateStudentTotal, calculateGrade, overallMax }) => {
+              const gradesCount = { "4": 0, "3.5": 0, "3": 0, "2.5": 0, "2": 0, "1.5": 0, "1": 0, "0": 0 };
+              let totalScoreSum = 0;
+              
+              const studentsWithTotal = students.map(s => {
+                const total = calculateStudentTotal(s.scores);
+                const grade = calculateGrade(total);
+                gradesCount[grade] = (gradesCount[grade] || 0) + 1;
+                totalScoreSum += total;
+                return { ...s, total, grade };
+              });
+
+              const averageScore = students.length ? (totalScoreSum / students.length).toFixed(2) : 0;
+              const topStudents = [...studentsWithTotal].sort((a,b) => b.total - a.total).slice(0, 5);
+              const passScore = overallMax / 2;
+              const passedCount = studentsWithTotal.filter(s => s.total >= passScore).length;
+              const passRate = students.length ? Math.round((passedCount / students.length) * 100) : 0;
+
+              const chartData = [
+                { grade: '4', count: gradesCount["4"] }, { grade: '3.5', count: gradesCount["3.5"] },
+                { grade: '3', count: gradesCount["3"] }, { grade: '2.5', count: gradesCount["2.5"] },
+                { grade: '2', count: gradesCount["2"] }, { grade: '1.5', count: gradesCount["1.5"] },
+                { grade: '1', count: gradesCount["1"] }, { grade: '0', count: gradesCount["0"] },
+              ];
+              const COLORS = ['#22c55e', '#3b82f6', '#8b5cf6', '#eab308', '#f97316', '#ef4444', '#78716c', '#000000'];
+
+              return (
+                <div className="space-y-6">
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex items-center gap-4">
+                      <div className="p-3 bg-blue-100 text-blue-600 rounded-lg"><i className="fas fa-user-plus text-xl"></i></div>
+                      <div>
+                        <div className="text-sm text-gray-500">นักเรียนทั้งหมด</div>
+                        <div className="text-2xl font-bold text-gray-800">{students.length} คน</div>
+                      </div>
+                    </div>
+                    <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex items-center gap-4">
+                      <div className="p-3 bg-green-100 text-green-600 rounded-lg"><i className="fas fa-chart-bar text-xl"></i></div>
+                      <div>
+                        <div className="text-sm text-gray-500">คะแนนเฉลี่ย</div>
+                        <div className="text-2xl font-bold text-gray-800">{averageScore}</div>
+                      </div>
+                    </div>
+                    <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex items-center gap-4">
+                      <div className="p-3 bg-yellow-100 text-yellow-600 rounded-lg"><i className="fas fa-check-circle text-xl"></i></div>
+                      <div>
+                        <div className="text-sm text-gray-500">อัตราการผ่าน (&gt;={Math.ceil(passScore)})</div>
+                        <div className="text-2xl font-bold text-gray-800">{passRate}%</div>
+                      </div>
+                    </div>
+                    <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex items-center gap-4">
+                      <div className="p-3 bg-purple-100 text-purple-600 rounded-lg"><i className="fas fa-book-open text-xl"></i></div>
+                      <div>
+                        <div className="text-sm text-gray-500">คะแนนสูงสุด</div>
+                        <div className="text-2xl font-bold text-gray-800">{topStudents[0]?.total || 0}</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+                      <h3 className="text-lg font-bold mb-4 text-gray-700">การกระจายเกรด</h3>
+                      <div className="h-64">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart data={chartData} margin={{ top: 20, right: 30, left: 0, bottom: 5 }}>
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                            <XAxis dataKey="grade" />
+                            <YAxis allowDecimals={false} />
+                            <RechartsTooltip cursor={{fill: '#f3f4f6'}} />
+                            <Bar dataKey="count" name="จำนวนนักเรียน" radius={[4, 4, 0, 0]}>
+                              {chartData.map((entry, index) => (
+                                <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                              ))}
+                            </Bar>
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+                    
+                    <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+                      <h3 className="text-lg font-bold mb-4 text-gray-700">นักเรียนคะแนนสูงสุด 5 อันดับ</h3>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm text-left border-collapse">
+                          <thead className="bg-gray-50 text-gray-600 uppercase text-xs">
+                            <tr>
+                              <th className="py-2 px-4 border-b">อันดับ</th>
+                              <th className="py-2 px-4 border-b">รหัส/ชื่อ</th>
+                              <th className="py-2 px-4 border-b text-center">คะแนน</th>
+                              <th className="py-2 px-4 border-b text-center">เกรด</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {topStudents.map((student, idx) => (
+                              <tr key={student.id} className="border-b hover:bg-gray-50">
+                                <td className="py-3 px-4">
+                                  <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-bold ${idx === 0 ? 'bg-yellow-200 text-yellow-800' : idx === 1 ? 'bg-gray-200 text-gray-800' : idx === 2 ? 'bg-orange-200 text-orange-800' : 'bg-blue-100 text-blue-800'}`}>
+                                    {idx + 1}
+                                  </span>
+                                </td>
+                                <td className="py-3 px-4">
+                                  <div className="font-medium">{student.name}</div>
+                                  <div className="text-xs text-gray-500">{student.studentId} | {student.classRoom}</div>
+                                </td>
+                                <td className="py-3 px-4 text-center font-bold text-gray-700">{student.total}</td>
+                                <td className="py-3 px-4 text-center">
+                                  <span className="bg-green-100 text-green-800 px-2 py-1 rounded text-xs font-bold">{student.grade}</span>
+                                </td>
+                              </tr>
+                            ))}
+                            {topStudents.length === 0 && (
+                              <tr><td colSpan="4" className="py-4 text-center text-gray-500">ไม่มีข้อมูล</td></tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            };
+
+            // --- Component: ScoreCell ---
+            const ScoreCell = ({ student, session, onUpdate }) => {
+              const initialValue = student.scores?.[session.id] || 0;
+              const [value, setValue] = useState(initialValue);
+              const [isEditing, setIsEditing] = useState(false);
+
+              useEffect(() => { setValue(student.scores?.[session.id] || 0); }, [student.scores, session.id]);
+
+              const handleBlur = () => {
+                setIsEditing(false);
+                let numVal = parseFloat(value);
+                if (isNaN(numVal) || numVal < 0) numVal = 0;
+                if (numVal > session.max) numVal = session.max;
+                setValue(numVal);
+                if (numVal !== initialValue) onUpdate(student.id, session.id, numVal);
+              };
+
+              const handleCheckboxChange = (e) => {
+                const isChecked = e.target.checked;
+                const numVal = isChecked ? session.max : 0;
+                setValue(numVal);
+                onUpdate(student.id, session.id, numVal);
+              };
+
+              if (session.type === 'checkbox') {
+                return (
+                  <td className="px-2 py-2 text-center border-r min-w-[70px]">
+                    <div className="flex justify-center items-center h-full">
+                      <input
+                        type="checkbox"
+                        checked={value > 0}
+                        onChange={handleCheckboxChange}
+                        className="w-5 h-5 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 cursor-pointer accent-blue-600"
+                        title={value > 0 ? `ได้ ${session.max} คะแนน` : 'ยังไม่ส่งงาน'}
+                      />
+                    </div>
+                  </td>
+                );
+              }
+
+              return (
+                <td className="px-2 py-2 text-center border-r min-w-[70px]">
+                  <input
+                    type="number" min="0" max={session.max} step="1"
+                    value={isEditing ? value : (value === 0 ? '' : value)}
+                    onFocus={() => setIsEditing(true)}
+                    onChange={(e) => setValue(e.target.value)}
+                    onBlur={handleBlur}
+                    className={`w-full text-center bg-transparent border-b ${value > session.max ? 'border-red-500 text-red-500 font-bold' : 'border-gray-200'} focus:outline-none focus:border-blue-500 focus:bg-blue-50 transition-colors`}
+                    placeholder="-"
+                  />
+                </td>
+              );
+            };
+
+            // --- Component: DeleteButton ---
+            const DeleteButton = ({ student, onDelete }) => {
+              const [confirming, setConfirming] = useState(false);
+              useEffect(() => {
+                let timer;
+                if (confirming) timer = setTimeout(() => setConfirming(false), 3000);
+                return () => clearTimeout(timer);
+              }, [confirming]);
+              const handleClick = (e) => {
+                e.stopPropagation();
+                if (confirming) onDelete(student.id, student.name);
+                else setConfirming(true);
+              };
+              return (
+                <div onClick={handleClick} className={`cursor-pointer transition-all ${confirming ? 'bg-red-600 text-white px-2 py-1 rounded text-xs' : ''}`}>
+                  {confirming ? 'ยืนยันลบ' : <i className="fas fa-trash-alt text-base"></i>}
+                </div>
+              );
+            }
+
+            // --- Main Application ---
+            function GradeSystem() {
+              const [activeTab, setActiveTab] = useState('table');
+              const [selectedClassRoom, setSelectedClassRoom] = useState('all');
+              const [user, setUser] = useState(null);
+              const [students, setStudents] = useState([]);
+              const [loading, setLoading] = useState(true);
+              const [notification, setNotification] = useState({ show: false, message: '', type: 'success' });
+              
+              const [newStudent, setNewStudent] = useState({ studentId: '', name: '', classRoom: '', number: '' });
+              
+              const [curriculum, setCurriculum] = useState(curriculumGroups);
+              const [maxScores, setMaxScores] = useState(defaultMaxScores);
+              const [sessionLabels, setSessionLabels] = useState({});
+              const [sessionTypes, setSessionTypes] = useState({});
+              const [isEditingMax, setIsEditingMax] = useState(false);
+
+              const [appPassword, setAppPassword] = useState(null);
+              const [isAppUnlocked, setIsAppUnlocked] = useState(false);
+              const [passwordInput, setPasswordInput] = useState('');
+              const [authError, setAuthError] = useState('');
+              
+              const [setupError, setSetupError] = useState('');
+
+              useEffect(() => {
+                if (firebaseError) {
+                    setSetupError("ไม่พบการเชื่อมต่อฐานข้อมูล Firebase กรุณานำข้อมูล Firebase Config มาใส่ในโค้ดให้ถูกต้อง");
+                    setLoading(false);
+                    return;
+                }
+
+                const initAuth = async () => {
+                  try {
+                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                      await signInWithCustomToken(auth, __initial_auth_token);
+                    } else {
+                      await signInAnonymously(auth);
+                    }
+                  } catch (err) {
+                    console.error("Auth error:", err);
+                    setSetupError("เกิดข้อผิดพลาดในการเชื่อมต่อเข้าสู่ระบบ");
+                    setLoading(false);
+                  }
+                };
+                initAuth();
+                
+                const unsubscribe = onAuthStateChanged(auth, (usr) => {
+                  setUser(usr);
+                });
+                return () => unsubscribe();
+              }, []);
+
+              useEffect(() => {
+                if (!user || firebaseError) return;
+
+                setLoading(true);
+                const studentsRef = collection(db, 'artifacts', appId, 'users', user.uid, 'students');
+                const q = query(studentsRef);
+
+                const unsubscribe = onSnapshot(q, (snapshot) => {
+                  const data = [];
+                  snapshot.forEach((doc) => { data.push({ id: doc.id, ...doc.data() }); });
+                  data.sort((a, b) => (parseInt(a.number) || 0) - (parseInt(b.number) || 0));
+                  setStudents(data);
+                  setLoading(false);
+                }, (error) => {
+                  console.error("Snapshot error:", error);
+                  setLoading(false);
+                });
+                
+                const settingsRef = doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'maxScores');
+                const unsubSettings = onSnapshot(settingsRef, (docSnap) => {
+                  if (docSnap.exists()) setMaxScores(prev => ({ ...prev, ...docSnap.data() }));
+                });
+
+                const labelsRef = doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'labels');
+                const unsubLabels = onSnapshot(labelsRef, (docSnap) => {
+                  if (docSnap.exists()) setSessionLabels(prev => ({ ...prev, ...docSnap.data() }));
+                });
+
+                const typesRef = doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'types');
+                const unsubTypes = onSnapshot(typesRef, (docSnap) => {
+                  if (docSnap.exists()) setSessionTypes(prev => ({ ...prev, ...docSnap.data() }));
+                });
+
+                const authRef = doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'auth');
+                const unsubAuth = onSnapshot(authRef, (docSnap) => {
+                  if (docSnap.exists() && docSnap.data().password) setAppPassword(docSnap.data().password);
+                  else setAppPassword("");
+                });
+
+                const curRef = doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'curriculum');
+                const unsubCur = onSnapshot(curRef, (docSnap) => {
+                  if (docSnap.exists() && docSnap.data().groups) setCurriculum(docSnap.data().groups);
+                });
+
+                return () => { unsubscribe(); unsubSettings(); unsubLabels(); unsubTypes(); unsubAuth(); unsubCur(); };
+              }, [user]);
+
+              const showNotification = (message, type = 'success') => {
+                setNotification({ show: true, message, type });
+                setTimeout(() => setNotification({ show: false, message: '', type: 'success' }), 3000);
+              };
+
+              const handleAddStudent = async (e) => {
+                e.preventDefault();
+                if (!user) return;
+                
+                if (!newStudent.studentId || !newStudent.name || !newStudent.classRoom || !newStudent.number) {
+                  showNotification("กรุณากรอกข้อมูลให้ครบถ้วน", "error"); return;
+                }
+
+                try {
+                  const studentsRef = collection(db, 'artifacts', appId, 'users', user.uid, 'students');
+                  const initialScores = {};
+                  const currentSessions = curriculum.flatMap(g => g.cols);
+                  currentSessions.forEach(s => { initialScores[s.id] = 0; });
+
+                  await addDoc(studentsRef, {
+                    studentId: newStudent.studentId, name: newStudent.name,
+                    classRoom: newStudent.classRoom, number: newStudent.number,
+                    scores: initialScores, createdAt: new Date().toISOString()
+                  });
+                  setNewStudent({ studentId: '', name: '', classRoom: '', number: '' });
+                  showNotification("เพิ่มนักเรียนเรียบร้อยแล้ว");
+                } catch (error) { showNotification("เกิดข้อผิดพลาดในการเพิ่มข้อมูล", "error"); }
+              };
+
+              const handleDeleteStudent = async (docId, studentName) => {
+                if (!user) return;
+                try {
+                  const docRef = doc(db, 'artifacts', appId, 'users', user.uid, 'students', docId);
+                  await deleteDoc(docRef);
+                  showNotification(`ลบข้อมูล ${studentName} แล้ว`);
+                } catch (error) { showNotification("เกิดข้อผิดพลาดในการลบข้อมูล", "error"); }
+              };
+
+              const handleFileUpload = (e) => {
+                const file = e.target.files[0];
+                if (!file || !user) return;
+                
+                const reader = new FileReader();
+                reader.onload = async (event) => {
+                  const text = event.target.result;
+                  const rows = text.split(/\r?\n/).map(row => row.split(',').map(cell => cell.trim()));
+                  const dataRows = rows.filter((row, index) => index > 0 && row.length >= 4 && row[0]);
+                  
+                  if (dataRows.length === 0) {
+                    showNotification("ไม่พบข้อมูลที่ถูกต้องในไฟล์", "error"); return;
+                  }
+
+                  setLoading(true);
+                  let successCount = 0;
+                  try {
+                    const studentsRef = collection(db, 'artifacts', appId, 'users', user.uid, 'students');
+                    const initialScores = {};
+                    const currentSessions = curriculum.flatMap(g => g.cols);
+                    currentSessions.forEach(s => { initialScores[s.id] = 0; });
+
+                    for (const row of dataRows) {
+                      const [studentId, name, classRoom, number] = row;
+                      await addDoc(studentsRef, {
+                        studentId, name, classRoom, number,
+                        scores: initialScores, createdAt: new Date().toISOString()
+                      });
+                      successCount++;
+                    }
+                    showNotification(`นำเข้าข้อมูล ${successCount} รายการสำเร็จ`);
+                  } catch (error) { showNotification("เกิดข้อผิดพลาดในการนำเข้าข้อมูลบางส่วน", "error"); }
+                  setLoading(false);
+                  e.target.value = null;
+                };
+                reader.readAsText(file);
+              };
+
+              const handleUpdateScore = async (studentId, sessionId, value) => {
+                if (!user) return;
+                try {
+                  const docRef = doc(db, 'artifacts', appId, 'users', user.uid, 'students', studentId);
+                  await updateDoc(docRef, { [`scores.${sessionId}`]: value });
+                } catch (error) { showNotification("บันทึกคะแนนไม่สำเร็จ", "error"); }
+              };
+
+              const handleUpdateMax = async (sessionId, val) => {
+                if (!user) return;
+                let num = parseInt(val);
+                if (isNaN(num) || num < 0) num = 0;
+                setMaxScores(prev => ({...prev, [sessionId]: num}));
+                try {
+                  const settingsRef = doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'maxScores');
+                  await setDoc(settingsRef, { [sessionId]: num }, { merge: true });
+                } catch (error) { showNotification("บันทึกคะแนนเต็มไม่สำเร็จ", "error"); }
+              };
+
+              const handleUpdateLabel = async (sessionId, val) => {
+                if (!user) return;
+                setSessionLabels(prev => ({...prev, [sessionId]: val}));
+                try {
+                  const labelsRef = doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'labels');
+                  await setDoc(labelsRef, { [sessionId]: val }, { merge: true });
+                } catch (error) { showNotification("บันทึกชื่อคะแนนไม่สำเร็จ", "error"); }
+              };
+
+              const handleUpdateType = async (sessionId, val) => {
+                if (!user) return;
+                setSessionTypes(prev => ({...prev, [sessionId]: val}));
+                try {
+                  const typesRef = doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'types');
+                  await setDoc(typesRef, { [sessionId]: val }, { merge: true });
+                } catch (error) { showNotification("บันทึกประเภทไม่สำเร็จ", "error"); }
+              };
+
+              const handleAddColumn = async (groupIndex) => {
+                if (!user) return;
+                const newId = `s_${Date.now()}`;
+                const newCurriculum = [...curriculum];
+                newCurriculum[groupIndex].cols.push({ id: newId, label: 'ใหม่', max: 10 });
+                setCurriculum(newCurriculum);
+                try {
+                  const curRef = doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'curriculum');
+                  await setDoc(curRef, { groups: newCurriculum }, { merge: true });
+                } catch (error) { showNotification("เพิ่มคอลัมน์ไม่สำเร็จ", "error"); }
+              };
+
+              const handleRemoveColumn = async (groupIndex, colId) => {
+                if (!user) return;
+                const newCurriculum = [...curriculum];
+                if (newCurriculum[groupIndex].cols.length <= 1) {
+                  showNotification("ต้องมีอย่างน้อย 1 ช่องในแต่ละช่วง", "error");
+                  return;
+                }
+                newCurriculum[groupIndex].cols = newCurriculum[groupIndex].cols.filter(c => c.id !== colId);
+                setCurriculum(newCurriculum);
+                try {
+                  const curRef = doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'curriculum');
+                  await setDoc(curRef, { groups: newCurriculum }, { merge: true });
+                } catch (error) { showNotification("ลบคอลัมน์ไม่สำเร็จ", "error"); }
+              };
+
+              const handleSetupPassword = async (e) => {
+                e.preventDefault();
+                if (!passwordInput || passwordInput.length < 4) {
+                  setAuthError('รหัสผ่านต้องมีอย่างน้อย 4 ตัวอักษร'); return;
+                }
+                try {
+                  const authRef = doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'auth');
+                  await setDoc(authRef, { password: passwordInput }, { merge: true });
+                  setIsAppUnlocked(true); setAuthError(''); setPasswordInput('');
+                  showNotification('ตั้งรหัสผ่านสำเร็จ');
+                } catch (err) { setAuthError('เกิดข้อผิดพลาดในการตั้งรหัสผ่าน'); }
+              };
+
+              const handleLogin = (e) => {
+                e.preventDefault();
+                if (passwordInput === appPassword) {
+                  setIsAppUnlocked(true); setAuthError(''); setPasswordInput('');
+                } else { setAuthError('รหัสผ่านไม่ถูกต้อง'); }
+              };
+
+              const dynamicCurriculum = curriculum.map(group => {
+                const newCols = group.cols.map(col => ({
+                  ...col,
+                  max: maxScores[col.id] !== undefined ? maxScores[col.id] : col.max,
+                  label: sessionLabels[col.id] !== undefined ? sessionLabels[col.id] : col.label,
+                  type: sessionTypes[col.id] !== undefined ? sessionTypes[col.id] : 'score'
+                }));
+                const groupMax = newCols.reduce((sum, c) => sum + c.max, 0);
+                return { ...group, cols: newCols, max: groupMax };
+              });
+              
+              const dynamicAllSessions = dynamicCurriculum.flatMap(g => g.cols);
+              const overallMax = dynamicAllSessions.reduce((sum, c) => sum + c.max, 0);
+
+              const calculateStudentTotal = (scores) => {
+                if (!scores) return 0;
+                return dynamicAllSessions.reduce((sum, session) => sum + (scores[session.id] || 0), 0);
+              };
+
+              const classRooms = ['all', ...new Set(students.map(s => s.classRoom).filter(Boolean))].sort();
+              const filteredStudents = selectedClassRoom === 'all' ? students : students.filter(s => s.classRoom === selectedClassRoom);
+
+              if (setupError) {
+                return (
+                  <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+                    <div className="bg-white p-8 rounded-xl shadow border border-red-200 text-center max-w-md">
+                        <i className="fas fa-exclamation-circle text-red-500 text-5xl mb-4"></i>
+                        <h2 className="text-xl font-bold text-gray-800 mb-2">ข้อผิดพลาดในการตั้งค่า</h2>
+                        <p className="text-gray-600 mb-4">{setupError}</p>
+                    </div>
+                  </div>
+                );
+              }
+
+              if (loading || (user && appPassword === null)) {
+                return (
+                  <div className="flex items-center justify-center min-h-screen bg-gray-50">
+                    <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+                  </div>
+                );
+              }
+
+              if (!isAppUnlocked) {
+                return (
+                  <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+                    <div className="bg-white p-8 rounded-xl shadow-sm border border-gray-100 w-full max-w-md border-t-4 border-t-blue-500">
+                      <div className="flex justify-center mb-6">
+                         <div className="p-4 bg-blue-50 text-blue-600 rounded-full">
+                           <i className="fas fa-key text-3xl"></i>
+                         </div>
+                      </div>
+                      <h2 className="text-2xl font-bold text-center text-gray-800 mb-2">
+                        {appPassword === "" ? "ตั้งรหัสผ่านเข้าใช้งาน" : "เข้าสู่ระบบ"}
+                      </h2>
+                      <p className="text-center text-gray-500 mb-6 text-sm">
+                        {appPassword === "" ? "กำหนดรหัสผ่านเพื่อป้องกันข้อมูลของคุณ" : "กรุณากรอกรหัสผ่านเพื่อเข้าใช้งาน"}
+                      </p>
+                      
+                      <form onSubmit={appPassword === "" ? handleSetupPassword : handleLogin} className="space-y-4">
+                        <div>
+                          <input 
+                            type="password" value={passwordInput}
+                            onChange={(e) => { setPasswordInput(e.target.value); setAuthError(''); }}
+                            placeholder="รหัสผ่าน"
+                            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-center text-lg tracking-[0.5em] font-mono"
+                            autoFocus
+                          />
+                        </div>
+                        {authError && <p className="text-red-500 text-sm text-center">{authError}</p>}
+                        <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-lg shadow-sm">
+                          {appPassword === "" ? "บันทึกและเข้าสู่ระบบ" : "เข้าสู่ระบบ"}
+                        </button>
+                      </form>
+                    </div>
+                  </div>
+                );
+              }
+
+              return (
+                <div className="min-h-screen bg-gray-50 p-4 text-gray-800 pb-16">
+                  {notification.show && (
+                    <div className={`fixed top-4 right-4 z-50 flex items-center p-4 rounded-lg shadow-lg text-white transition-opacity duration-300 ${notification.type === 'error' ? 'bg-red-500' : 'bg-green-500'}`}>
+                      <i className={`fas ${notification.type === 'error' ? 'fa-exclamation-circle' : 'fa-check-circle'} mr-2`}></i>
+                      {notification.message}
+                    </div>
+                  )}
+
+                  <div className="max-w-7xl mx-auto space-y-6">
+                    <div className="bg-white rounded-xl shadow-sm p-6 flex flex-col md:flex-row items-start md:items-center justify-between border-t-4 border-blue-500 gap-4">
+                      <div>
+                        <h1 className="text-2xl font-bold flex items-center gap-2">
+                          <i className="fas fa-book-open text-blue-500"></i> ระบบบันทึกคะแนน
+                        </h1>
+                        <p className="text-gray-500 mt-1">วิชาการออกแบบและเทคโนโลยี ม.1 (พว.)</p>
+                      </div>
+                      
+                      <div className="flex flex-col sm:flex-row items-end sm:items-center gap-3">
+                        <select
+                          value={selectedClassRoom} onChange={(e) => setSelectedClassRoom(e.target.value)}
+                          className="bg-white border border-gray-300 text-gray-700 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 p-2 outline-none shadow-sm"
+                        >
+                          <option value="all">ทุกชั้น / ห้อง</option>
+                          {classRooms.filter(c => c !== 'all').map(c => (<option key={c} value={c}>{c}</option>))}
+                        </select>
+
+                        <button onClick={() => { setIsAppUnlocked(false); setPasswordInput(''); }}
+                          className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 shadow-sm"
+                        >
+                          <i className="fas fa-lock"></i> ล็อก
+                        </button>
+
+                        <button onClick={() => setIsEditingMax(!isEditingMax)}
+                          className={`flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium border shadow-sm ${isEditingMax ? 'bg-red-50 text-red-600 border-red-200' : 'bg-white border-gray-300 text-gray-700'}`}
+                        >
+                          <i className={`fas ${isEditingMax ? 'fa-save' : 'fa-cog'}`}></i> 
+                          <span className="hidden sm:inline">{isEditingMax ? 'บันทึกการตั้งค่า' : 'ตั้งค่าคะแนน'}</span>
+                        </button>
+
+                        <div className="flex bg-gray-100 p-1 rounded-lg">
+                          <button onClick={() => setActiveTab('table')} className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium ${activeTab === 'table' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-600'}`}>
+                            <i className="fas fa-table"></i> ตาราง
+                          </button>
+                          <button onClick={() => setActiveTab('dashboard')} className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium ${activeTab === 'dashboard' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-600'}`}>
+                            <i className="fas fa-chart-pie"></i> สรุป
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {activeTab === 'dashboard' ? (
+                      <DashboardView students={filteredStudents} allSessions={dynamicAllSessions} calculateStudentTotal={calculateStudentTotal} calculateGrade={(t) => calculateGrade(t, overallMax)} overallMax={overallMax} />
+                    ) : (
+                      <div className="bg-white rounded-xl shadow-sm p-6">
+                        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 border-b pb-2 gap-4">
+                          <h2 className="text-lg font-bold flex items-center gap-2">
+                            <i className="fas fa-user-plus text-green-500"></i> เพิ่มนักเรียน
+                          </h2>
+                          <div className="flex items-center gap-2">
+                            <label className="cursor-pointer bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-2 border border-gray-200">
+                              <i className="fas fa-file-upload"></i> นำเข้า CSV
+                              <input type="file" accept=".csv" className="hidden" onChange={handleFileUpload} />
+                            </label>
+                            <div className="text-xs text-gray-400" title="ต้องมีหัวตาราง: รหัส,ชื่อ,ชั้น,เลขที่">(รหัส,ชื่อ,ชั้น,เลขที่)</div>
+                          </div>
+                        </div>
+                        
+                        <form onSubmit={handleAddStudent} className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
+                          <div>
+                            <label className="block text-xs font-medium text-gray-500 mb-1">เลขที่</label>
+                            <input type="text" required className="w-full border border-gray-300 rounded px-3 py-2 text-sm" value={newStudent.number} onChange={e => setNewStudent({...newStudent, number: e.target.value})} placeholder="เช่น 1" />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-gray-500 mb-1">รหัสนักเรียน</label>
+                            <input type="text" required className="w-full border border-gray-300 rounded px-3 py-2 text-sm" value={newStudent.studentId} onChange={e => setNewStudent({...newStudent, studentId: e.target.value})} placeholder="เช่น 66001" />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-gray-500 mb-1">ชื่อ-นามสกุล</label>
+                            <input type="text" required className="w-full border border-gray-300 rounded px-3 py-2 text-sm" value={newStudent.name} onChange={e => setNewStudent({...newStudent, name: e.target.value})} placeholder="สมชาย ใจดี" />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-gray-500 mb-1">ชั้น</label>
+                            <input type="text" required className="w-full border border-gray-300 rounded px-3 py-2 text-sm" value={newStudent.classRoom} onChange={e => setNewStudent({...newStudent, classRoom: e.target.value})} placeholder="เช่น ม.1/1" />
+                          </div>
+                          <div className="flex items-end">
+                            <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded flex items-center justify-center gap-2 h-[38px]">
+                              <i className="fas fa-save"></i> บันทึก
+                            </button>
+                          </div>
+                        </form>
+
+                        <div className="overflow-x-auto border border-gray-200 rounded-lg shadow-sm">
+                          <table className="w-full text-sm text-left border-collapse min-w-max">
+                            <thead className="bg-gray-100 text-gray-700 text-xs">
+                              <tr>
+                                <th rowSpan="2" className="py-3 px-4 border-r border-b bg-white sticky left-0 z-30 min-w-[50px]">ที่</th>
+                                <th rowSpan="2" className="py-3 px-4 border-r border-b bg-white sticky left-[50px] z-30 min-w-[100px]">รหัส</th>
+                                <th rowSpan="2" className="py-3 px-4 border-r border-b bg-white sticky left-[150px] z-30 min-w-[200px]">ชื่อ-นามสกุล</th>
+                                <th rowSpan="2" className="py-3 px-4 border-r border-b bg-white sticky left-[350px] z-30 min-w-[80px]">ชั้น</th>
+                            
+                                {dynamicCurriculum.map((group, idx) => (
+                                  <th key={idx} colSpan={group.cols.length} className={`py-2 px-2 text-center border-r border-b border-t ${group.color} ${group.borderColor}`}>
+                                    <div className="font-bold">{group.name}</div>
+                                    <div className="text-[10px] opacity-75">({group.max} คะแนน)</div>
+                                    {isEditingMax && (
+                                      <button onClick={() => handleAddColumn(idx)} className="mt-1 bg-white/70 hover:bg-white text-gray-800 text-[10px] px-2 py-0.5 rounded shadow-sm border border-black/10 transition-colors">
+                                        + เพิ่มช่อง
+                                      </button>
+                                    )}
+                                  </th>
+                                ))}
+                                
+                                <th rowSpan="2" className="py-3 px-4 border-l-2 border-gray-300 border-b bg-yellow-50 text-yellow-800 text-center sticky right-[120px] z-20 min-w-[80px]">รวม ({overallMax})</th>
+                                <th rowSpan="2" className="py-3 px-4 border-r border-b bg-green-50 text-green-800 text-center sticky right-[60px] z-20 min-w-[60px]">เกรด</th>
+                                <th rowSpan="2" className="py-3 px-4 border-b bg-white text-center sticky right-0 z-30 min-w-[60px]">ลบ</th>
+                              </tr>
+                              <tr>
+                                {dynamicCurriculum.map((group, groupIdx) => (
+                                  group.cols.map((col, idx) => (
+                                    <th key={col.id} className={`py-1 px-1 border-r border-b text-center bg-gray-50 font-medium ${idx === group.cols.length - 1 ? 'border-r-2 border-r-gray-300' : ''}`}>
+                                      {isEditingMax ? (
+                                        <div className="flex flex-col items-center gap-1 my-1 relative group/col">
+                                          {group.cols.length > 1 && (
+                                            <button onClick={() => handleRemoveColumn(groupIdx, col.id)} className="absolute -top-3 -right-1 bg-red-500 hover:bg-red-600 text-white rounded-full w-4 h-4 flex items-center justify-center text-[10px] opacity-0 group-hover/col:opacity-100 transition-opacity z-10 shadow-sm" title="ลบช่องนี้">
+                                              <i className="fas fa-times"></i>
+                                            </button>
+                                          )}
+                                          <input type="text" className="w-16 text-center text-xs border border-blue-400 rounded focus:outline-none bg-blue-50" value={col.label} onChange={(e) => handleUpdateLabel(col.id, e.target.value)} title="ชื่อคอลัมน์" />
+                                          <div className="flex gap-1">
+                                            <input type="number" min="0" className="w-9 text-center text-xs border border-blue-400 rounded focus:outline-none bg-blue-50 font-bold" value={col.max} onChange={(e) => handleUpdateMax(col.id, e.target.value)} title="คะแนนเต็ม" />
+                                            <select className="w-14 text-[9px] text-center border border-blue-400 rounded focus:outline-none bg-blue-50 p-0" value={col.type} onChange={(e) => handleUpdateType(col.id, e.target.value)} title="ประเภทข้อมูล">
+                                              <option value="score">คะแนน</option>
+                                              <option value="checkbox">เช็คบ็อกซ์</option>
+                                            </select>
+                                          </div>
+                                        </div>
+                                      ) : (
+                                        <>
+                                          <div className="whitespace-nowrap">{col.label}</div>
+                                          <div className="text-[9px] text-gray-400">(ต. {col.max})</div>
+                                        </>
+                                      )}
+                                    </th>
+                                  ))
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {filteredStudents.length === 0 ? (
+                                <tr><td colSpan={dynamicAllSessions.length + 7} className="py-8 text-center text-gray-500">ไม่มีข้อมูลนักเรียน</td></tr>
+                              ) : (
+                                filteredStudents.map((student) => {
+                                  const total = calculateStudentTotal(student.scores);
+                                  const grade = calculateGrade(total, overallMax);
+                                  return (
+                                    <tr key={student.id} className="bg-white border-b hover:bg-blue-50/30 transition-colors group">
+                                      <td className="py-3 px-4 border-r bg-white group-hover:bg-blue-50/50 sticky left-0 z-10 text-center">{student.number}</td>
+                                      <td className="py-3 px-4 border-r bg-white group-hover:bg-blue-50/50 sticky left-[50px] z-10">{student.studentId}</td>
+                                      <td className="py-3 px-4 border-r bg-white group-hover:bg-blue-50/50 sticky left-[150px] z-10 whitespace-nowrap">{student.name}</td>
+                                      <td className="py-3 px-4 border-r bg-white group-hover:bg-blue-50/50 sticky left-[350px] z-10 text-center">{student.classRoom}</td>
+                                      
+                                      {dynamicCurriculum.map((group) => (
+                                        group.cols.map((col) => (
+                                          <ScoreCell key={col.id} student={student} session={col} onUpdate={handleUpdateScore} />
+                                        ))
+                                      ))}
+
+                                      <td className="py-3 px-4 border-l-2 border-gray-300 bg-yellow-50 group-hover:bg-yellow-100/50 text-center font-bold sticky right-[120px] z-10">{total}</td>
+                                      <td className="py-3 px-4 border-r bg-green-50 group-hover:bg-green-100/50 text-center font-bold text-green-700 sticky right-[60px] z-10">{grade}</td>
+                                      <td className="py-3 px-2 border-r bg-white group-hover:bg-red-50/50 text-center sticky right-0 z-20 text-red-500 hover:text-red-700">
+                                         <DeleteButton student={student} onDelete={handleDeleteStudent} />
+                                      </td>
+                                    </tr>
+                                  );
+                                })
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            }
+
+            const root = ReactDOM.createRoot(document.getElementById('root'));
+            root.render(<GradeSystem />);
+        };
+
+        // ตรวจสอบว่าโมดูลต่างๆ โหลดเสร็จสมบูรณ์หรือยัง
+        const checkDependencies = setInterval(() => {
+            if (window.isFirebaseLoaded && window.Recharts) {
+                clearInterval(checkDependencies);
+                initApp();
+            }
+        }, 50);
+
+        // ป้องกันกรณีโหลดกราฟไม่ขึ้น
+        setTimeout(() => {
+            if (window.isFirebaseLoaded && !window.Recharts) {
+                console.warn("Recharts โหลดไม่สำเร็จ แต่ยังเข้าใช้งานระบบได้");
+                clearInterval(checkDependencies);
+                initApp();
+            }
+        }, 5000);
+    </script>
+</body>
+</html>
